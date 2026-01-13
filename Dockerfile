@@ -23,6 +23,10 @@ RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 COPY --from=builder /app/target/release/kiro-rs /app/kiro-rs
+RUN mkdir config
+COPY config.json ./config/
+COPY credentials.json ./config/
+
 
 VOLUME ["/app/config"]
 
