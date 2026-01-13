@@ -24,16 +24,21 @@ RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/target/release/kiro-rs /app/kiro-rs
 
-# 一次性创建所有目录和文件
+# 创建配置目录和文件
 RUN mkdir -p config && \
-    echo '{' > config/config.json && \
-    echo '  "host": "0.0.0.0",' >> config/config.json && \
-    echo '  "port": 8990,' >> config/config.json && \
-    echo '  "apiKey": "sk-kiro-rs-default-api-key-change-me",' >> config/config.json && \
-    echo '  "region": "us-east-1",' >> config/config.json && \
-    echo '  "adminApiKey": "sk-admin-default-admin-key-change-me"' >> config/config.json && \
-    echo '}' >> config/config.json && \
-    echo '[]' > config/credentials.json
+    # 生成config.json - 注意使用单引号避免变量扩展
+    cat > config/config.json << 'EOF'
+{
+  "host": "0.0.0.0",
+  "port": 8990,
+  "apiKey": "sk-kiro-rs-default-api-key-change-me",
+  "region": "us-east-1",
+  "adminApiKey": "sk-admin-default-admin-key-change-me"
+}
+EOF
+
+# 生成credentials.json
+RUN echo '[]' > config/credentials.json
 
 
 VOLUME ["/app/config"]
