@@ -62,4 +62,5 @@ VOLUME ["/app/config"]
 EXPOSE 8990
 
 # 使用shell作为默认入口，这样容器不会自动退出
-CMD tail -f /dev/null
+#CMD tail -f /dev/null
+CMD ["./kiro-rs", "-c", "/app/config/config.json", "--credentials", "/app/config/credentials.json"]
