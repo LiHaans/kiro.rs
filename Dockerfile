@@ -40,6 +40,8 @@ EOF
 # 生成credentials.json
 RUN echo '[]' > config/credentials.json
 
+RUN chmod -R 777 ./config
+
 # 创建启动脚本
 RUN cat > /start.sh << 'EOF'
 #!/bin/sh
