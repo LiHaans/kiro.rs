@@ -20,21 +20,48 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 标准版本（不含 PostgreSQL）
           - platform: macos-latest
             target: aarch64-apple-darwin
             name: macOS-arm64
+            features: ""
           - platform: macos-latest
             target: x86_64-apple-darwin
             name: macOS-x64
+            features: ""
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             name: Windows-x64
+            features: ""
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             name: Linux-x64
+            features: ""
           - platform: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             name: Linux-arm64
+            features: ""
+          # PostgreSQL 版本
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            name: macOS-arm64-postgres
+            features: "--features postgres"
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            name: macOS-x64-postgres
+            features: "--features postgres"
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows-x64-postgres
+            features: "--features postgres"
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            name: Linux-x64-postgres
+            features: "--features postgres"
+          - platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: Linux-arm64-postgres
+            features: "--features postgres"
 
     runs-on: ${{ matrix.platform }}
 
@@ -72,7 +99,7 @@ jobs:
           cache-on-failure: true
 
       - name: Build app
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.features }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

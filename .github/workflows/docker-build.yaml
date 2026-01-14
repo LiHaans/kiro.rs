@@ -23,12 +23,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 标准版本（不含 PostgreSQL）
           - platform: linux/amd64
             runner: ubuntu-latest
             arch: amd64
+            features: ""
+            suffix: ""
           - platform: linux/arm64
             runner: ubuntu-22.04-arm
             arch: arm64
+            features: ""
+            suffix: ""
+          # PostgreSQL 版本
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+            features: "--features postgres"
+            suffix: "-postgres"
+          - platform: linux/arm64
+            runner: ubuntu-22.04-arm
+            arch: arm64
+            features: "--features postgres"
+            suffix: "-postgres"
 
     steps:
       - name: Checkout
@@ -57,11 +73,13 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          build-args: |
+            FEATURES=${{ matrix.features }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           push: true
           tags: |
-            ghcr.io/${{ steps.lowercase.outputs.repo_owner_lower }}/kiro-rs:${{ github.event.inputs.version || github.ref_name }}-${{ matrix.arch }}
+            ghcr.io/${{ steps.lowercase.outputs.repo_owner_lower }}/kiro-rs:${{ github.event.inputs.version || github.ref_name }}-${{ matrix.arch }}${{ matrix.suffix }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.description=Kiro.rs Docker Image
