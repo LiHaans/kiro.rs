@@ -19,14 +19,14 @@ RUN cargo build --release
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates bash vim curl
 
 WORKDIR /app
 COPY --from=builder /app/target/release/kiro-rs /app/kiro-rs
 
 # 创建配置目录和文件
 RUN mkdir -p config && \
-    # 生成config.json - 注意使用单引号避免变量扩展
+    # 生成config.json
     cat > config/config.json << 'EOF'
 {
   "host": "0.0.0.0",
@@ -40,9 +40,22 @@ EOF
 # 生成credentials.json
 RUN echo '[]' > config/credentials.json
 
+# 创建启动脚本
+RUN cat > /start.sh << 'EOF'
+#!/bin/sh
+echo "=== Kiro.rs 启动脚本 ==="
+echo "1. 启动应用: ./kiro-rs -c /app/config/config.json --credentials /app/config/credentials.json"
+echo "2. 进入交互模式: /bin/bash"
+echo "3. 检查配置文件: cat /app/config/config.json"
+echo "================================="
+/bin/bash
+EOF
+
+RUN chmod +x /start.sh
 
 VOLUME ["/app/config"]
 
 EXPOSE 8990
 
-CMD ["./kiro-rs", "-c", "/app/config/config.json", "--credentials", "/app/config/credentials.json"]
+# 使用shell作为默认入口，这样容器不会自动退出
+CMD ["/bin/sh", "-c", "echo '容器已启动，请输入命令手动运行应用：'; /bin/sh"]
