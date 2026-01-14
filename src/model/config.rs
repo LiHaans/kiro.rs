@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::Path;
 
@@ -165,16 +166,137 @@ impl Config {
         "config.json"
     }
 
-    /// 从文件加载配置
+    /// 从文件加载配置，并应用环境变量覆盖
     pub fn load<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        if !path.exists() {
+        let mut config = if !path.exists() {
             // 配置文件不存在，返回默认配置
-            return Ok(Self::default());
+            Self::default()
+        } else {
+            let content = fs::read_to_string(path)?;
+            serde_json::from_str(&content)?
+        };
+
+        // 应用环境变量覆盖
+        config.apply_env_overrides();
+        Ok(config)
+    }
+
+    /// 从环境变量覆盖配置项
+    ///
+    /// 支持的环境变量：
+    /// - KIRO_HOST: 服务监听地址
+    /// - KIRO_PORT: 服务监听端口
+    /// - KIRO_REGION: AWS 区域
+    /// - KIRO_VERSION: Kiro 版本
+    /// - KIRO_MACHINE_ID: 机器 ID
+    /// - KIRO_API_KEY: API 密钥
+    /// - KIRO_SYSTEM_VERSION: 系统版本
+    /// - KIRO_NODE_VERSION: Node 版本
+    /// - KIRO_COUNT_TOKENS_API_URL: count_tokens API 地址
+    /// - KIRO_COUNT_TOKENS_API_KEY: count_tokens API 密钥
+    /// - KIRO_COUNT_TOKENS_AUTH_TYPE: count_tokens 认证类型
+    /// - KIRO_PROXY_URL: HTTP 代理地址
+    /// - KIRO_PROXY_USERNAME: 代理用户名
+    /// - KIRO_PROXY_PASSWORD: 代理密码
+    /// - KIRO_ADMIN_API_KEY: Admin API 密钥
+    /// - KIRO_CREDENTIAL_STORAGE_TYPE: 凭据存储类型 (file/postgres)
+    /// - KIRO_CREDENTIAL_SYNC_INTERVAL_SECS: 凭据同步间隔（秒）
+    /// - KIRO_POSTGRES_DATABASE_URL 或 DATABASE_URL: PostgreSQL 连接 URL
+    /// - KIRO_POSTGRES_TABLE_NAME: PostgreSQL 表名
+    /// - KIRO_POSTGRES_MAX_CONNECTIONS: PostgreSQL 最大连接数
+    fn apply_env_overrides(&mut self) {
+        // 基础配置
+        if let Ok(val) = env::var("KIRO_HOST") {
+            self.host = val;
+        }
+        if let Ok(val) = env::var("KIRO_PORT") {
+            if let Ok(port) = val.parse() {
+                self.port = port;
+            }
+        }
+        if let Ok(val) = env::var("KIRO_REGION") {
+            self.region = val;
+        }
+        if let Ok(val) = env::var("KIRO_VERSION") {
+            self.kiro_version = val;
+        }
+        if let Ok(val) = env::var("KIRO_MACHINE_ID") {
+            self.machine_id = Some(val);
+        }
+        if let Ok(val) = env::var("KIRO_API_KEY") {
+            self.api_key = Some(val);
+        }
+        if let Ok(val) = env::var("KIRO_SYSTEM_VERSION") {
+            self.system_version = val;
+        }
+        if let Ok(val) = env::var("KIRO_NODE_VERSION") {
+            self.node_version = val;
         }
 
-        let content = fs::read_to_string(path)?;
-        let config: Config = serde_json::from_str(&content)?;
-        Ok(config)
+        // count_tokens 配置
+        if let Ok(val) = env::var("KIRO_COUNT_TOKENS_API_URL") {
+            self.count_tokens_api_url = Some(val);
+        }
+        if let Ok(val) = env::var("KIRO_COUNT_TOKENS_API_KEY") {
+            self.count_tokens_api_key = Some(val);
+        }
+        if let Ok(val) = env::var("KIRO_COUNT_TOKENS_AUTH_TYPE") {
+            self.count_tokens_auth_type = val;
+        }
+
+        // 代理配置
+        if let Ok(val) = env::var("KIRO_PROXY_URL") {
+            self.proxy_url = Some(val);
+        }
+        if let Ok(val) = env::var("KIRO_PROXY_USERNAME") {
+            self.proxy_username = Some(val);
+        }
+        if let Ok(val) = env::var("KIRO_PROXY_PASSWORD") {
+            self.proxy_password = Some(val);
+        }
+
+        // Admin API 配置
+        if let Ok(val) = env::var("KIRO_ADMIN_API_KEY") {
+            self.admin_api_key = Some(val);
+        }
+
+        // 凭据存储配置
+        if let Ok(val) = env::var("KIRO_CREDENTIAL_STORAGE_TYPE") {
+            self.credential_storage_type = val;
+        }
+        if let Ok(val) = env::var("KIRO_CREDENTIAL_SYNC_INTERVAL_SECS") {
+            if let Ok(secs) = val.parse() {
+                self.credential_sync_interval_secs = secs;
+            }
+        }
+
+        // PostgreSQL 配置（优先使用 KIRO_POSTGRES_DATABASE_URL，其次 DATABASE_URL）
+        let pg_url = env::var("KIRO_POSTGRES_DATABASE_URL")
+            .or_else(|_| env::var("DATABASE_URL"))
+            .ok();
+        let pg_table = env::var("KIRO_POSTGRES_TABLE_NAME").ok();
+        let pg_max_conn = env::var("KIRO_POSTGRES_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok());
+
+        // 如果有任何 PostgreSQL 环境变量，确保 postgres 配置存在
+        if pg_url.is_some() || pg_table.is_some() || pg_max_conn.is_some() {
+            let pg = self.postgres.get_or_insert_with(|| PostgresConfig {
+                database_url: String::new(),
+                table_name: default_table_name(),
+                max_connections: default_max_connections(),
+            });
+
+            if let Some(url) = pg_url {
+                pg.database_url = url;
+            }
+            if let Some(table) = pg_table {
+                pg.table_name = table;
+            }
+            if let Some(max_conn) = pg_max_conn {
+                pg.max_connections = max_conn;
+            }
+        }
     }
 }

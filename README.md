@@ -455,7 +455,61 @@ VALUES ('your-refresh-token', '2025-12-31T00:00:00Z', 'idc', 'client-id', 'clien
 
 ## 环境变量
 
-可通过环境变量配置日志级别：
+所有配置项都支持通过环境变量覆盖，环境变量优先级高于配置文件。
+
+### 支持的环境变量
+
+| 环境变量 | 对应配置项 | 描述 |
+|---------|-----------|------|
+| `KIRO_HOST` | `host` | 服务监听地址 |
+| `KIRO_PORT` | `port` | 服务监听端口 |
+| `KIRO_REGION` | `region` | AWS 区域 |
+| `KIRO_VERSION` | `kiroVersion` | Kiro 版本号 |
+| `KIRO_MACHINE_ID` | `machineId` | 机器 ID |
+| `KIRO_API_KEY` | `apiKey` | API 密钥 |
+| `KIRO_SYSTEM_VERSION` | `systemVersion` | 系统版本 |
+| `KIRO_NODE_VERSION` | `nodeVersion` | Node 版本 |
+| `KIRO_COUNT_TOKENS_API_URL` | `countTokensApiUrl` | count_tokens API 地址 |
+| `KIRO_COUNT_TOKENS_API_KEY` | `countTokensApiKey` | count_tokens API 密钥 |
+| `KIRO_COUNT_TOKENS_AUTH_TYPE` | `countTokensAuthType` | count_tokens 认证类型 |
+| `KIRO_PROXY_URL` | `proxyUrl` | HTTP/SOCKS5 代理地址 |
+| `KIRO_PROXY_USERNAME` | `proxyUsername` | 代理用户名 |
+| `KIRO_PROXY_PASSWORD` | `proxyPassword` | 代理密码 |
+| `KIRO_ADMIN_API_KEY` | `adminApiKey` | Admin API 密钥 |
+| `KIRO_CREDENTIAL_STORAGE_TYPE` | `credentialStorageType` | 凭据存储类型 (`file`/`postgres`) |
+| `KIRO_CREDENTIAL_SYNC_INTERVAL_SECS` | `credentialSyncIntervalSecs` | 凭据同步间隔（秒） |
+| `KIRO_POSTGRES_DATABASE_URL` 或 `DATABASE_URL` | `postgres.databaseUrl` | PostgreSQL 连接 URL |
+| `KIRO_POSTGRES_TABLE_NAME` | `postgres.tableName` | PostgreSQL 表名 |
+| `KIRO_POSTGRES_MAX_CONNECTIONS` | `postgres.maxConnections` | PostgreSQL 最大连接数 |
+
+### 使用示例
+
+```bash
+# 通过环境变量配置 PostgreSQL
+export KIRO_API_KEY="sk-your-api-key"
+export KIRO_CREDENTIAL_STORAGE_TYPE="postgres"
+export DATABASE_URL="postgres://user:password@localhost:5432/kiro"
+export KIRO_POSTGRES_TABLE_NAME="kiro_credentials"
+
+./target/release/kiro-rs
+```
+
+```bash
+# Docker 部署示例
+docker run -d \
+  -e KIRO_HOST="0.0.0.0" \
+  -e KIRO_PORT="8080" \
+  -e KIRO_API_KEY="sk-your-api-key" \
+  -e KIRO_CREDENTIAL_STORAGE_TYPE="postgres" \
+  -e DATABASE_URL="postgres://user:password@db:5432/kiro" \
+  -e KIRO_ADMIN_API_KEY="sk-admin-key" \
+  -p 8080:8080 \
+  kiro-rs
+```
+
+### 日志级别
+
+可通过 `RUST_LOG` 环境变量配置日志级别：
 
 ```bash
 RUST_LOG=debug ./target/release/kiro-rs
