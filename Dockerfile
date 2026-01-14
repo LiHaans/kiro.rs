@@ -58,4 +58,4 @@ VOLUME ["/app/config"]
 EXPOSE 8990
 
 # 使用shell作为默认入口，这样容器不会自动退出
-CMD ["/bin/sh", "-c", "echo '容器已启动，请输入命令手动运行应用：'; /bin/sh"]
+CMD tail -f /dev/null
