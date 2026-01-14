@@ -188,6 +188,9 @@ curl http://127.0.0.1:8990/v1/messages \
 | `proxyUsername` | string | - | 代理用户名（可选） |
 | `proxyPassword` | string | - | 代理密码（可选） |
 | `adminApiKey` | string | - | Admin API 密钥，配置后启用凭据管理 API（可选） |
+| `credentialStorageType` | string | `file` | 凭据存储类型：`file` 或 `postgres` |
+| `postgres` | object | - | PostgreSQL 配置（当 `credentialStorageType` 为 `postgres` 时必填） |
+| `credentialSyncIntervalSecs` | number | `60` | 凭据同步间隔（秒），0 表示禁用定时同步 |
 
 ### credentials.json
 
@@ -235,6 +238,12 @@ kiro-rs/
 │       ├── provider.rs         # API 提供者
 │       ├── token_manager.rs    # Token 管理
 │       ├── machine_id.rs       # 设备指纹生成
+│       ├── storage/            # 凭据存储模块
+│       │   ├── mod.rs          # 模块入口
+│       │   ├── traits.rs       # CredentialStorage trait
+│       │   ├── file.rs         # 文件存储实现
+│       │   ├── postgres.rs     # PostgreSQL 存储实现
+│       │   └── sync.rs         # 定时同步管理器
 │       ├── model/              # 数据模型
 │       │   ├── credentials.rs  # OAuth 凭证
 │       │   ├── events/         # 响应事件类型
@@ -252,6 +261,118 @@ kiro-rs/
 └── credentials.example.multiple.json # 多凭据示例
 ```
 
+## PostgreSQL 凭据存储
+
+除了默认的文件存储方式，kiro-rs 还支持使用 PostgreSQL 数据库存储凭据，适用于多实例部署或需要集中管理凭据的场景。
+
+### 编译 PostgreSQL 支持
+
+PostgreSQL 支持是可选功能，需要在编译时启用 `postgres` feature：
+
+```bash
+cargo build --release --features postgres
+```
+
+### PostgreSQL 配置
+
+在 `config.json` 中配置 PostgreSQL 存储：
+
+```json
+{
+   "host": "127.0.0.1",
+   "port": 8990,
+   "apiKey": "sk-kiro-rs-qazWSXedcRFV123456",
+   "region": "us-east-1",
+   "credentialStorageType": "postgres",
+   "postgres": {
+      "databaseUrl": "postgres://user:password@localhost:5432/kiro",
+      "tableName": "kiro_credentials",
+      "maxConnections": 5
+   },
+   "credentialSyncIntervalSecs": 30
+}
+```
+
+### PostgreSQL 配置项
+
+| 字段 | 类型 | 默认值 | 描述 |
+|------|------|--------|------|
+| `databaseUrl` | string | - | PostgreSQL 连接 URL（必填） |
+| `tableName` | string | `kiro_credentials` | 凭据表名 |
+| `maxConnections` | number | `5` | 连接池最大连接数 |
+
+### 数据库表结构
+
+首次使用前，需要在 PostgreSQL 中创建凭据表：
+
+```sql
+CREATE TABLE kiro_credentials (
+    id              BIGSERIAL PRIMARY KEY,
+    access_token    TEXT,
+    refresh_token   TEXT NOT NULL,
+    profile_arn     TEXT,
+    expires_at      TIMESTAMPTZ,
+    auth_method     VARCHAR(32) DEFAULT 'social',
+    client_id       TEXT,
+    client_secret   TEXT,
+    priority        INTEGER DEFAULT 0,
+    region          VARCHAR(32),
+    machine_id      VARCHAR(64),
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+    deleted_at      TIMESTAMPTZ
+);
+
+-- 优化查询性能的索引
+CREATE INDEX idx_credentials_priority ON kiro_credentials(priority) WHERE deleted_at IS NULL;
+CREATE INDEX idx_credentials_updated_at ON kiro_credentials(updated_at);
+```
+
+### 凭据字段说明
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `id` | BIGSERIAL | 自增主键，用于标识凭据 |
+| `access_token` | TEXT | OAuth 访问令牌（可选，可自动刷新） |
+| `refresh_token` | TEXT | OAuth 刷新令牌（必填） |
+| `profile_arn` | TEXT | AWS Profile ARN（可选） |
+| `expires_at` | TIMESTAMPTZ | Token 过期时间 |
+| `auth_method` | VARCHAR(32) | 认证方式：`social` 或 `idc` |
+| `client_id` | TEXT | IdC 登录的客户端 ID（可选） |
+| `client_secret` | TEXT | IdC 登录的客户端密钥（可选） |
+| `priority` | INTEGER | 凭据优先级，数字越小越优先 |
+| `region` | VARCHAR(32) | 凭据级 region（可选） |
+| `machine_id` | VARCHAR(64) | 凭据级机器码（可选） |
+| `created_at` | TIMESTAMPTZ | 创建时间 |
+| `updated_at` | TIMESTAMPTZ | 更新时间 |
+| `deleted_at` | TIMESTAMPTZ | 软删除时间（非空表示已删除） |
+
+### 插入凭据示例
+
+```sql
+-- 插入 Social 认证凭据
+INSERT INTO kiro_credentials (refresh_token, expires_at, auth_method, priority)
+VALUES ('your-refresh-token', '2025-12-31T00:00:00Z', 'social', 0);
+
+-- 插入 IdC 认证凭据
+INSERT INTO kiro_credentials (refresh_token, expires_at, auth_method, client_id, client_secret, priority)
+VALUES ('your-refresh-token', '2025-12-31T00:00:00Z', 'idc', 'client-id', 'client-secret', 1);
+```
+
+### 定时同步
+
+当使用 PostgreSQL 存储时，kiro-rs 会定时检查数据库中的凭据变更并自动热更新：
+
+- `credentialSyncIntervalSecs`: 同步间隔（秒），默认 60 秒
+- 设置为 `0` 可禁用定时同步
+- 热更新时会保留运行时状态（如失败计数、禁用状态）
+
+### 向后兼容
+
+- 默认 `credentialStorageType` 为 `file`，使用 `credentials.json` 文件
+- 不配置 PostgreSQL 相关选项时，行为与之前版本完全一致
+- 文件存储模式下也支持定时同步（检查文件变更）
+
 ## 技术栈
 
 - **Web 框架**: [Axum](https://github.com/tokio-rs/axum) 0.8
@@ -260,6 +381,7 @@ kiro-rs/
 - **序列化**: [Serde](https://serde.rs/)
 - **日志**: [tracing](https://github.com/tokio-rs/tracing)
 - **命令行**: [Clap](https://github.com/clap-rs/clap)
+- **数据库**: [SQLx](https://github.com/launchbadge/sqlx) (可选，PostgreSQL 支持)
 
 ## 高级功能
 

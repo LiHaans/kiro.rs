@@ -58,6 +58,35 @@ pub struct Config {
     /// Admin API 密钥（可选，启用 Admin API 功能）
     #[serde(default)]
     pub admin_api_key: Option<String>,
+
+    /// 凭据存储类型（可选，"file" 或 "postgres"，默认 "file"）
+    #[serde(default = "default_credential_storage_type")]
+    pub credential_storage_type: String,
+
+    /// PostgreSQL 配置（当 credential_storage_type = "postgres" 时使用）
+    #[serde(default)]
+    pub postgres: Option<PostgresConfig>,
+
+    /// 凭据同步间隔（秒），0 表示禁用定时同步，默认 60 秒
+    #[serde(default = "default_credential_sync_interval")]
+    pub credential_sync_interval_secs: u64,
+}
+
+/// PostgreSQL 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostgresConfig {
+    /// 数据库连接 URL
+    /// 格式: postgres://user:password@host:port/database
+    pub database_url: String,
+
+    /// 凭据表名（默认 "kiro_credentials"）
+    #[serde(default = "default_table_name")]
+    pub table_name: String,
+
+    /// 连接池最大连接数（默认 5）
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
 }
 
 fn default_host() -> String {
@@ -89,6 +118,22 @@ fn default_count_tokens_auth_type() -> String {
     "x-api-key".to_string()
 }
 
+fn default_credential_storage_type() -> String {
+    "file".to_string()
+}
+
+fn default_table_name() -> String {
+    "kiro_credentials".to_string()
+}
+
+fn default_max_connections() -> u32 {
+    5
+}
+
+fn default_credential_sync_interval() -> u64 {
+    60
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -107,6 +152,9 @@ impl Default for Config {
             proxy_username: None,
             proxy_password: None,
             admin_api_key: None,
+            credential_storage_type: default_credential_storage_type(),
+            postgres: None,
+            credential_sync_interval_secs: default_credential_sync_interval(),
         }
     }
 }

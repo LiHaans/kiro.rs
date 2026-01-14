@@ -448,10 +448,12 @@ pub struct MultiTokenManager {
     current_id: Mutex<u64>,
     /// Token 刷新锁，确保同一时间只有一个刷新操作
     refresh_lock: TokioMutex<()>,
-    /// 凭据文件路径（用于回写）
+    /// 凭据文件路径（用于回写，仅文件存储模式使用）
     credentials_path: Option<PathBuf>,
     /// 是否为多凭据格式（数组格式才回写）
     is_multiple_format: bool,
+    /// 存储后端（可选，用于异步持久化）
+    storage: Option<std::sync::Arc<dyn crate::kiro::storage::CredentialStorage>>,
 }
 
 /// 每个凭据最大 API 调用失败次数
@@ -549,6 +551,7 @@ impl MultiTokenManager {
             refresh_lock: TokioMutex::new(()),
             credentials_path,
             is_multiple_format,
+            storage: None,
         };
 
         // 如果有新分配的 ID 或新生成的 machineId，立即持久化到配置文件
@@ -561,6 +564,85 @@ impl MultiTokenManager {
         }
 
         Ok(manager)
+    }
+
+    /// 设置存储后端
+    ///
+    /// 设置后，持久化操作将使用存储后端而非直接写文件
+    pub fn set_storage(&mut self, storage: std::sync::Arc<dyn crate::kiro::storage::CredentialStorage>) {
+        self.storage = Some(storage);
+    }
+
+    /// 获取存储后端
+    pub fn storage(&self) -> Option<&std::sync::Arc<dyn crate::kiro::storage::CredentialStorage>> {
+        self.storage.as_ref()
+    }
+
+    /// 重新加载凭据（保留运行时状态）
+    ///
+    /// 用于热更新场景，从存储后端重新加载凭据
+    /// 保留现有凭据的 failure_count 和 disabled 状态
+    pub fn reload_credentials(&self, new_credentials: Vec<KiroCredentials>) {
+        use std::collections::HashSet;
+
+        let mut entries = self.entries.lock();
+        let mut current_id = self.current_id.lock();
+
+        // 构建新凭据 ID 集合
+        let new_ids: HashSet<u64> = new_credentials
+            .iter()
+            .filter_map(|c| c.id)
+            .collect();
+
+        // 保存现有凭据的运行时状态
+        let existing_states: std::collections::HashMap<u64, (u32, bool, Option<DisabledReason>)> = entries
+            .iter()
+            .map(|e| (e.id, (e.failure_count, e.disabled, e.disabled_reason)))
+            .collect();
+
+        // 移除已删除的凭据
+        entries.retain(|e| new_ids.contains(&e.id));
+
+        // 更新或添加凭据
+        for cred in new_credentials {
+            if let Some(id) = cred.id {
+                if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+                    // 更新现有凭据（保留运行时状态）
+                    entry.credentials = cred;
+                } else {
+                    // 添加新凭据，尝试恢复之前的状态（如果有）
+                    let (failure_count, disabled, disabled_reason) = existing_states
+                        .get(&id)
+                        .copied()
+                        .unwrap_or((0, false, None));
+
+                    entries.push(CredentialEntry {
+                        id,
+                        credentials: cred,
+                        failure_count,
+                        disabled,
+                        disabled_reason,
+                    });
+                }
+            }
+        }
+
+        // 按优先级排序
+        entries.sort_by_key(|e| e.credentials.priority);
+
+        // 如果当前凭据被删除，切换到优先级最高的可用凭据
+        if !entries.iter().any(|e| e.id == *current_id && !e.disabled) {
+            if let Some(best) = entries.iter().filter(|e| !e.disabled).min_by_key(|e| e.credentials.priority) {
+                *current_id = best.id;
+                tracing::info!("热更新后切换到凭据 #{}（优先级 {}）", best.id, best.credentials.priority);
+            } else if let Some(first) = entries.first() {
+                *current_id = first.id;
+            } else {
+                *current_id = 0;
+            }
+        }
+
+        tracing::info!("凭据已热更新，当前共 {} 个", entries.len());
     }
 
     /// 获取配置的引用
@@ -812,6 +894,30 @@ impl MultiTokenManager {
     fn persist_credentials(&self) -> anyhow::Result<bool> {
         use anyhow::Context;
 
+        // 收集所有凭据
+        let credentials: Vec<KiroCredentials> = {
+            let entries = self.entries.lock();
+            entries.iter().map(|e| e.credentials.clone()).collect()
+        };
+
+        // 如果有存储后端，使用存储后端持久化
+        if let Some(storage) = &self.storage {
+            let storage = storage.clone();
+            let creds = credentials.clone();
+
+            // 在后台异步保存，不阻塞当前操作
+            tokio::spawn(async move {
+                if let Err(e) = storage.save_all(&creds).await {
+                    tracing::warn!("存储后端持久化失败: {}", e);
+                } else {
+                    tracing::debug!("已通过存储后端持久化凭据");
+                }
+            });
+
+            return Ok(true);
+        }
+
+        // 回退到文件存储（向后兼容）
         // 仅多凭据格式才回写
         if !self.is_multiple_format {
             return Ok(false);
@@ -820,12 +926,6 @@ impl MultiTokenManager {
         let path = match &self.credentials_path {
             Some(p) => p,
             None => return Ok(false),
-        };
-
-        // 收集所有凭据
-        let credentials: Vec<KiroCredentials> = {
-            let entries = self.entries.lock();
-            entries.iter().map(|e| e.credentials.clone()).collect()
         };
 
         // 序列化为 pretty JSON
