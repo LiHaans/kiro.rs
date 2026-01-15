@@ -44,11 +44,58 @@ impl PostgresCredentialStorage {
             max_connections
         );
 
-        Ok(Self {
+        let storage = Self {
             pool,
             table_name: table_name.to_string(),
             last_sync: AtomicI64::new(0),
-        })
+        };
+
+        // 自动创建凭据表
+        storage.ensure_credentials_table().await?;
+
+        Ok(storage)
+    }
+
+    /// 确保凭据表存在
+    async fn ensure_credentials_table(&self) -> anyhow::Result<()> {
+        let create_table_sql = format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {} (
+                id              BIGSERIAL PRIMARY KEY,
+                access_token    TEXT,
+                refresh_token   TEXT NOT NULL,
+                profile_arn     TEXT,
+                expires_at      TIMESTAMPTZ,
+                auth_method     VARCHAR(32) DEFAULT 'social',
+                client_id       TEXT,
+                client_secret   TEXT,
+                priority        INTEGER DEFAULT 0,
+                region          VARCHAR(32),
+                machine_id      VARCHAR(64),
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                updated_at      TIMESTAMPTZ DEFAULT NOW(),
+                deleted_at      TIMESTAMPTZ
+            )
+            "#,
+            self.table_name
+        );
+
+        sqlx::query(&create_table_sql).execute(&self.pool).await?;
+
+        // 创建索引
+        let create_indexes_sql = format!(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_{0}_priority ON {0}(priority) WHERE deleted_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_{0}_updated_at ON {0}(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_{0}_expires_at ON {0}(expires_at) WHERE deleted_at IS NULL;
+            "#,
+            self.table_name
+        );
+
+        sqlx::query(&create_indexes_sql).execute(&self.pool).await?;
+
+        tracing::info!("凭据表 {} 已就绪", self.table_name);
+        Ok(())
     }
 
     /// 更新最后同步时间
@@ -84,8 +131,10 @@ impl CredentialStorage for PostgresCredentialStorage {
             .into_iter()
             .map(|row| {
                 let expires_at: Option<chrono::DateTime<chrono::Utc>> = row.get("expires_at");
+                // id 是主键，永远不会是 NULL，直接使用 i64 类型
+                let id: i64 = row.get("id");
                 KiroCredentials {
-                    id: row.get::<Option<i64>, _>("id").map(|id| id as u64),
+                    id: Some(id as u64),
                     access_token: row.get("access_token"),
                     refresh_token: row.get("refresh_token"),
                     profile_arn: row.get("profile_arn"),
@@ -101,7 +150,7 @@ impl CredentialStorage for PostgresCredentialStorage {
             .collect();
 
         self.update_last_sync();
-        tracing::debug!("从 PostgreSQL 加载了 {} 个凭据", credentials.len());
+        tracing::info!("从 PostgreSQL 加载了 {} 个凭据", credentials.len());
 
         Ok(credentials)
     }
