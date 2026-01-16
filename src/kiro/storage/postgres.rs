@@ -82,17 +82,25 @@ impl PostgresCredentialStorage {
 
         sqlx::query(&create_table_sql).execute(&self.pool).await?;
 
-        // 创建索引
-        let create_indexes_sql = format!(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_{0}_priority ON {0}(priority) WHERE deleted_at IS NULL;
-            CREATE INDEX IF NOT EXISTS idx_{0}_updated_at ON {0}(updated_at);
-            CREATE INDEX IF NOT EXISTS idx_{0}_expires_at ON {0}(expires_at) WHERE deleted_at IS NULL;
-            "#,
-            self.table_name
-        );
+        // 创建索引（每条语句单独执行，因为 PostgreSQL prepared statement 不支持多条语句）
+        let index_sqls = [
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_{0}_priority ON {0}(priority) WHERE deleted_at IS NULL",
+                self.table_name
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_{0}_updated_at ON {0}(updated_at)",
+                self.table_name
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_{0}_expires_at ON {0}(expires_at) WHERE deleted_at IS NULL",
+                self.table_name
+            ),
+        ];
 
-        sqlx::query(&create_indexes_sql).execute(&self.pool).await?;
+        for sql in &index_sqls {
+            sqlx::query(sql).execute(&self.pool).await?;
+        }
 
         tracing::info!("凭据表 {} 已就绪", self.table_name);
         Ok(())
